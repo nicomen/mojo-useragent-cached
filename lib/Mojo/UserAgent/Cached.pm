@@ -3,6 +3,7 @@ package Mojo::UserAgent::Cached;
 use warnings;
 use strict;
 use v5.10;
+use Algorithm::LCSS;
 use CHI;
 use Devel::StackTrace;
 use English qw(-no_match_vars);
@@ -23,7 +24,7 @@ use Time::HiRes qw/time/;
 Readonly my $HTTP_OK => 200;
 Readonly my $HTTP_FILE_NOT_FOUND => 404;
 
-our $VERSION = '1.04';
+our $VERSION = '1.05';
 
 # TODO: Timeout, fallback
 # TODO: Expected result content (json etc)
@@ -39,16 +40,17 @@ has 'request_timeout'    => sub { $ENV{MOJO_REQUEST_TIMEOUT}    // 10 };
 # MUAC_CLIENT_CONFIG
 has 'local_dir'          => sub { $ENV{MUAC_LOCAL_DIR}          // q{}   };
 has 'always_return_file' => sub { $ENV{MUAC_ALWAYS_RETURN_FILE} // undef };
-has 'cache_agent'        => sub { $ENV{MUAC_NOCACHE}            ? () : # Allow override cache
-    CHI->new(
-        driver             => 'File',
-        root_dir           => '/tmp/mojo-useragent-cached',
-        serializer         => 'Storable',
-        namespace          => 'MUAC_Client',
-        expires_in         => '1 minute',
-        expires_on_backend => 1,
-    );
-};
+
+has 'cache_agent'        => sub { $ENV{MUAC_NOCACHE} ? () : CHI->new(
+        driver             => $ENV{MUAC_CACHE_DRIVER}             || 'File',
+        root_dir           => $ENV{MUAC_CACHE_ROOT_DIR}           || '/tmp/mojo-useragent-cached',
+        serializer         => $ENV{MUAC_CACHE_SERIALIZER}         || 'Storable',
+        namespace          => $ENV{MUAC_CACHE_NAMESPACE}          || 'MUAC_Client',
+        expires_in         => $ENV{MUAC_CACHE_EXPIRES_IN}         // '1 minute',
+        expires_on_backend => $ENV{MUAC_CACHE_EXPIRES_ON_BACKEND} // 1,
+)};
+
+has 'cache_url_opts' => sub { {} };
 has 'logger' => sub { Mojo::Log->new() };
 has 'access_log' => sub { $ENV{MUAC_ACCESS_LOG} || '' };
 has 'use_expired_cached_content' => sub { $ENV{MUAC_USE_EXPIRED_CACHED_CONTENT} // 1 };
@@ -84,6 +86,8 @@ sub new {
         local_dir
         always_return_file
         cache_agent
+        cache_url_opts
+        logger
         access_log
         use_expired_cached_content
         accepted_error_codes
@@ -136,7 +140,7 @@ sub get {
     } : ();
     # Is an absolute URL or an URL relative to the app eg. http://foo.com/ or /foo.txt
     if (Mojo::URL->new($url)->is_abs || $url =~ m{ \A / }gmx) {
-        if ($self->is_cacheable($key)) { # TODO: URL by URL, and case-by-case expiration
+        if ($self->is_cacheable($key)) {
             my $serialized = $self->cache_agent->get($key);
             if ($serialized) {
                 my $cached_tx = _build_fake_tx($serialized);
@@ -208,7 +212,7 @@ sub _post_process_get {
             }
         } else {
             # Store object in cache
-            $self->cache_agent->set($key, _serialize_tx($tx));
+            $self->cache_agent->set($key, _serialize_tx($tx), $self->_cache_url_opts($tx->req->url));
         }
     }
 
@@ -219,6 +223,12 @@ sub _post_process_get {
     });
 
     return $tx;
+}
+
+sub _cache_url_opts {
+    my ($self, $url) = @_;
+    my ($pat, $opts) = List::Util::pairfirst { $url =~ /$a/; } %{ $self->cache_url_opts || {} };
+    return $opts || ();
 }
 
 sub set {
@@ -300,18 +310,15 @@ sub sort_query {
 sub _serialize_tx {
     my ($tx) = @_;
 
-    my $cached_ts = time;
+    $tx->res->headers->header('X-Mojo-UserAgent-Cached', time);
+
     return {
-        cached  => $cached_ts,
         method  => $tx->req->method,
         url     => $tx->req->url,
         code    => $tx->res->code,
         body    => $tx->res->body,
         json    => $tx->res->json,
-        headers => {
-          %{ $tx->res->headers->to_hash || {} },
-          'X-Mojo-UserAgent-Cached' => $cached_ts
-        }
+        headers => $tx->res->headers->to_hash,
     };
 }
 
@@ -325,6 +332,10 @@ sub _build_fake_tx {
     $tx->req->url(Mojo::URL->new($opts->{url}));
 
     $tx->res->headers->from_hash($opts->{headers});
+
+    my $now = time;
+    $tx->res->headers->header('X-Mojo-UserAgent-Cached-Age', $now - ($tx->res->headers->header('X-Mojo-UserAgent-Cached') || $now));
+
     $tx->res->code($opts->{code});
     $tx->res->{json} = $opts->{json};
     $tx->res->body($opts->{body});
@@ -383,12 +394,21 @@ sub _log_line {
     $self->_write_local_file_res($tx, $ENV{MUAC_CLIENT_WRITE_LOCAL_FILE_RES_DIR});
 
     my $callers = $self->_get_stacktrace;
+    my $created_stacktrace = $self->created_stacktrace;
+
+    # Remove common parts to get smaller created stacktrace
+    my $strings = Algorithm::LCSS::CSS_Sorted( [ split /,/, $callers ] , [ split /,/, $created_stacktrace ] );
+    map {
+        my @lcss = @{$_};
+        my $pat = join ",", @lcss[1..$#lcss-1];
+        if (scalar @lcss > 2) { $created_stacktrace =~ s{$pat}{,}mx }
+    } @{ $strings || [] };
 
     $self->logger->debug(sprintf(q{Returning %s '%s' => %s for %s (%s)}, (
         $opts->{type},
         String::Truncate::elide( $tx->req->url, 150, { truncate => 'middle'} ),
         ($tx->res->code || $tx->res->error->{code} || $tx->res->error->{message}),
-        $callers, $self->created_stacktrace
+        $callers, $created_stacktrace
     )));
 
     return unless $self->access_log;
@@ -494,21 +514,46 @@ to the value of the C<MUAC_ALWAYS_RETURN_FILE> environment value and if not, it 
 
   my $cache_agent = $ua->cache_agent;
   $ua->cache_agent(CHI->new(
-     driver             => 'File',
-     root_dir           => '/tmp/mojo-useragent-cached',
-     serializer         => 'Storable',
-     namespace          => 'MUAC_Client',
-     expires_in         => '1 minutes',
-     expires_on_backend => 1,
+        driver             => $ENV{MUAC_CACHE_DRIVER}             || 'File',
+        root_dir           => $ENV{MUAC_CACHE_ROOT_DIR}           || '/tmp/mojo-useragent-cached',
+        serializer         => $ENV{MUAC_CACHE_SERIALIZER}         || 'Storable',
+        namespace          => $ENV{MUAC_CACHE_NAMESPACE}          || 'MUAC_Client',
+        expires_in         => $ENV{MUAC_CACHE_EXPIRES_IN}         // '1 minute',
+        expires_on_backend => $ENV{MUAC_CACHE_EXPIRES_ON_BACKEND} // 1,
   ));
 
 Tells L<Mojo::UserAgent::Cached> which cache_agent to use. It needs to be CHI-compliant and defaults to the above settings.
 
 You may also set the C<MUAC_NOCACHE> environment variable to avoid caching at all.
 
+=head2 cache_url_opts
+
+   my $urls_href = $ua->cache_url_opts;
+   $ua->cache_url_opts({ 
+       'https?://foo.com/long-lasting-data.*' => { expires_in => '2 weeks' }, # Cache some data two weeks
+       '.*' => { expires_at => 0 }, # Don't store anything in cache
+   });
+   
+Accepts a hash ref of regexp strings and expire times, this allows you to define cache validity time for individual URLs, hosts etc.
+The first match will be used.
+
 =head2 logger
 
 Provide a logging object, defaults to Mojo::Log
+
+Example:
+    Returning fetched 'https://graph.facebook.com?ids=http%3A%2F%2Fexample.com%2Flivet%2F20...-lommebok&access_token=1234' => 200 for A.C.Facebook:133,185,183,A.M.F.ArticleList:19,9,A.M.Selector:47,responsive/modules/most-shared.html.tt:15,15,13,templates/inc/macros.tt:125,138,templates/responsive/frontpage.html.tt:10,10,16,Template:66,A.G.C.Article:338,147,main:14 (A.C.Facebook:68,E.C.Sandbox_874:7,A.C.Facebook:133,,,main:14)
+
+Format:
+    Returning <cache-status> '<URL>' => 'HTTP code' for <request_stacktrace> (<created_stacktrace>)
+
+    cache-status: (cached|fetched|cached+expired)
+    URL: the URL requested, shortened when it is really long
+    request_stacktrace: Simplified stacktrace with leading module names shortened, also includes TT stacktrace support. Line numbers in the same module are grouped (order kept of course).
+    created_stacktrace: Stack trace for creation of UA object, useful to see what options went in, and which object is used. Same format as normal stacktrace, but skips common parts.
+                        Example:
+                           created_stacktrace: A.C.Facebook:68,E.C.Sandbox_874:7,A.C.Facebook:133,<common part replaced>,main:14
+                           stacktrace: A.C.Facebook:133,< common part: 185,183,A.M.F.ArticleList:19,9,A.M.Selector:47,responsive/modules/most-shared.html.tt:15,15,13,templates/inc/macros.tt:125,138,templates/responsive/frontpage.html.tt:10,10,16,Template:66,A.G.C.Article:338,147 >,main:14
 
 =head2 access_log
 

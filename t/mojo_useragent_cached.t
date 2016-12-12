@@ -5,6 +5,7 @@ BEGIN {
   $ENV{MOJO_REACTOR} = 'Mojo::Reactor::Poll';
 }
 
+use File::Temp;
 use Test::More;
 use Time::HiRes;
 use IO::Compress::Gzip 'gzip';
@@ -16,11 +17,14 @@ use Mojolicious;
 
 # Mojo::UserAgent::Cached specific tests
 
+$ENV{SUA_CACHE_ROOT_DIR} = File::Temp::tempdir( CLEANUP => 1 );
+
 # Setup mock server
 my $app = Mojolicious->new();
 my $controller = sub { shift->render(text => Time::HiRes::time(), status => 200); };
 $app->routes->get('/' => { text => 'works' });
 $app->routes->get('/maybe_not_found' => sub { $controller->(@_); } );
+$app->routes->get('/content' => { text => 'content' });
 
 use FindBin qw($Bin);
 
@@ -41,31 +45,39 @@ my $ua4 = Mojo::UserAgent::Cached->new();
 is $ua4->get('NOT_newsfeed.xml')->res->code, 404, 'Return 404 when file is not found';
 is $ua4->get('NOT_newsfeed.xml')->res->body, '',  'Return empty body when file not found';
 
-$ua4->invalidate('http://google.com');
+subtest 'Test against real URL on Mock server' => sub {
+    my $ua5 = Mojo::UserAgent::Cached->new();
+    $ua5->server->app($app);
 
-my $tx1 = $ua4->get('http://google.com');
-my $first_ts = $tx1->res->headers->header('X-Mojo-UserAgent-Cached');
-ok !$first_ts, 'Not cached first time';
+    local *Mojo::UserAgent::Cached::is_cacheable = sub { return 1; };
 
-my $tx2 = $ua4->get('http://google.com');
-my $second_ts = $tx2->res->headers->header('X-Mojo-UserAgent-Cached');
-ok $second_ts, 'Response is cached';
+    $ua5->invalidate('/content');
 
-my $tx3 = $ua4->get('http://google.com');
-my $third_ts = $tx3->res->headers->header('X-Mojo-UserAgent-Cached');
-is $second_ts, $third_ts, 'Response is still the same one cached';
+    my $tx1 = $ua5->get('/content');
+    my $first_age = $tx1->res->headers->header('X-Mojo-UserAgent-Cached-Age');
+    ok !$first_age, 'Not cached first time';
 
-# Requests with headers
-my $rand = time;
-my $tx4 = $ua4->get('http://google.com' => { 'X-Some-Header' => $rand });
-my $fourth_ts = $tx4->res->headers->header('X-Mojo-UserAgent-Cached');
-ok !$fourth_ts, 'Not cached first time';
-ok $tx4->res->content, 'Contains something';
+    my $tx2 = $ua5->get('/content');
+    my $second_ts = $tx2->res->headers->header('X-Mojo-UserAgent-Cached-Cached');
+    my $second_age = $tx2->res->headers->header('X-Mojo-UserAgent-Cached-Age');
+    ok $second_age > 0, 'Response is cached';
 
-my $tx5 = $ua4->get('http://google.com' => { 'X-Some-Header' => $rand });
-my $fifth_ts = $tx5->res->headers->header('X-Mojo-UserAgent-Cached');
-ok $fifth_ts, 'Response is cached';
-ok $tx5->res->content, 'Contains something';
+    my $tx3 = $ua5->get('/content');
+    my $third_ts = $tx3->res->headers->header('X-Mojo-UserAgent-Cached-Cached');
+    is $second_ts, $third_ts, 'Response is still the same one cached';
+
+    # Requests with headers
+    my $rand = time;
+    my $tx4 = $ua5->get('/content' => { 'X-Some-Header' => $rand });
+    my $fourth_age = $tx4->res->headers->header('X-Mojo-UserAgent-Cached-Age');
+    ok !$fourth_age, 'Not cached first time';
+    ok $tx4->res->content, 'Contains something';
+
+    my $tx5 = $ua5->get('/content' => { 'X-Some-Header' => $rand });
+    my $fifth_ts = $tx5->res->headers->header('X-Mojo-UserAgent-Cached-Age');
+    ok $fifth_ts > 0, 'Response is cached';
+    ok $tx5->res->content, 'Contains something';
+};
 
 # Set cache directly to avoid redundant call to Vipr
 my $ua_with_mock_server = Mojo::UserAgent::Cached->new();
@@ -96,12 +108,17 @@ subtest 'ABCN-3702' => sub {
 
 subtest 'ABCN-3572' => sub {
     my $ua = Mojo::UserAgent::Cached->new();
+    $ua->server->app($app);
 
-    my $url = "http://www.google.com/?non-blocking-cache-test";
+    # Allow caching /foo requests too 
+    no warnings 'redefine';
+    local *Mojo::UserAgent::Cached::is_cacheable = sub { return 1; };
+
+    my $url = "/content/?non-blocking-cache-test";
     $ua->invalidate($url);
     my $tx = $ua->get($url);
     is $tx->res->code, 200, 'right status';
-    ok !$tx->res->headers->header('X-Mojo-UserAgent-Cached'), 'First request should not be cached';
+    ok !$tx->res->headers->header('X-Mojo-UserAgent-Cached-Age'), 'First request should not be cached';
 
     my $first_code = $tx->res->code;
     my $first_body = $tx->res->body;
@@ -120,40 +137,45 @@ subtest 'ABCN-3572' => sub {
     );
     ok $success, 'successful';
     ok $headers->header('X-Mojo-UserAgent-Cached'), 'Non-blocking request should be cached';
+    ok $headers->header('X-Mojo-UserAgent-Cached-Age') > 0, 'Non-blocking request should be cached';
 
     is $code,    $first_code, 'cached status is the same as original';
     is $body,    $first_body, 'cached body is the same as original';
 
-    $headers->remove('X-Mojo-UserAgent-Cached');
+    $headers->remove('X-Mojo-UserAgent-Cached-Age');
     is_deeply $headers->to_hash, $first_headers->to_hash, 'cached headers are the same as original';
 };
 
 subtest 'Cache with request headers' => sub {
     my $ua = Mojo::UserAgent::Cached->new();
+    $ua->server->app($app);
 
     my $keys = {
-        'http://www.google.com' => ['http://www.google.com'],
-        'http://www.google.com,{X-Test,Test}' => ['http://www.google.com', { 'X-Test' => 'Test' } ],
-        'http://www.google.com,{X-Test,Test}' => ['http://www.google.com', { 'X-Test' => 'Test' }, sub { } ],
-        'http://www.google.com,{},form,{a,b}' => ['http://www.google.com', {}, form => { 'a' => 'b' } ],
-        'http://www.google.com,{X-Test,Test},form,{a,b}' => ['http://www.google.com', { 'X-Test' => 'Test' }, form => { 'a' => 'b' }, sub { } ],
-        'http://www.google.com,{X-Test,Test},json,{a,b}' => ['http://www.google.com', { 'X-Test' => 'Test' }, json => { 'a' => 'b' }, sub { } ],
+        'http://www.non-existent-server.com' => ['http://www.non-existent-server.com'],
+        'http://www.non-existent-server.com,{X-Test,Test}' => ['http://www.non-existent-server.com', { 'X-Test' => 'Test' } ],
+        'http://www.non-existent-server.com,{X-Test,Test}' => ['http://www.non-existent-server.com', { 'X-Test' => 'Test' }, sub { } ],
+        'http://www.non-existent-server.com,{},form,{a,b}' => ['http://www.non-existent-server.com', {}, form => { 'a' => 'b' } ],
+        'http://www.non-existent-server.com,{X-Test,Test},form,{a,b}' => ['http://www.non-existent-server.com', { 'X-Test' => 'Test' }, form => { 'a' => 'b' }, sub { } ],
+        'http://www.non-existent-server.com,{X-Test,Test},json,{a,b}' => ['http://www.non-existent-server.com', { 'X-Test' => 'Test' }, json => { 'a' => 'b' }, sub { } ],
     };
     while (my ($k, $v) = each %{$keys}) {
         is $ua->generate_key(@{$v}), $k, "generate_key " . (join " ", @{$v}) . " => $k";
     }
 
-    my @params = ('http://www.google.com' => { 'X-Test' => 'Test' });
+    # Allow caching /foo requests too
+    local *Mojo::UserAgent::Cached::is_cacheable = sub { return 1; };
+
+    my @params = ('/content' => { 'X-Test' => 'Test' });
 
     my $cache_key = $ua->generate_key(@params);
-    is($cache_key, 'http://www.google.com,{X-Test,Test}', 'cache key is correct');
+    is($cache_key, '/content,{X-Test,Test}', 'cache key is correct');
     $ua->invalidate($cache_key);
 
     my $tx1 = $ua->get(@params);
-    ok !$tx1->res->headers->header('X-Mojo-UserAgent-Cached'), 'first response is not cached';
+    ok !$tx1->res->headers->header('X-Mojo-UserAgent-Cached-Age'), 'first response is not cached';
 
     my $tx2 = $ua->get(@params);
-    ok $tx2->res->headers->header('X-Mojo-UserAgent-Cached'), 'response is cached';
+    ok $tx2->res->headers->header('X-Mojo-UserAgent-Cached-Age') > 0, 'response is cached';
 
 };
 
@@ -171,8 +193,12 @@ subtest 'Should run callbacks even if content is local' => sub {
 
 subtest 'Should run callbacks even if content is cached' => sub {
     my $ua = Mojo::UserAgent::Cached->new();
+    $ua->server->app($app);
 
-    my $url = 'http://www.google.com';
+    # Allow caching /foo requests too
+    local *Mojo::UserAgent::Cached::is_cacheable = sub { return 1; };
+
+    my $url = '/content';
     my $tx = $ua->get($url);
 
     $tx = $ua->get($url => sub {
@@ -183,58 +209,58 @@ subtest 'Should run callbacks even if content is cached' => sub {
 };
 
 subtest 'expired+cached functionality' => sub {
-	my $ua = Mojo::UserAgent::Cached->new();
-	$ua->server->app($app);
-	# Allow caching /foo requests too
-	local *Mojo::UserAgent::Cached::is_cacheable = sub { return 1; };
-	# make sure we have no cache around
-	$ua->invalidate($ua->generate_key("/maybe_not_found"));
+    my $ua = Mojo::UserAgent::Cached->new();
+    $ua->server->app($app);
+    # Allow caching /foo requests too
+    local *Mojo::UserAgent::Cached::is_cacheable = sub { return 1; };
+    # make sure we have no cache around
+    $ua->invalidate($ua->generate_key("/maybe_not_found"));
 
-	ok $ua->is_cacheable("/maybe_not_found"), 'Local URL is cacheable';
+    ok $ua->is_cacheable("/maybe_not_found"), 'Local URL is cacheable';
 
-	# First normal request
-	my $tx = $ua->get("/maybe_not_found");
-	is $tx->res->code, '200', 'Get 200 correctly first time';
-	my $body = $tx->res->body;
-	like $body, qr/\d+\.\d+/, 'Body has timestamp only';
+    # First normal request
+    my $tx = $ua->get("/maybe_not_found");
+    is $tx->res->code, '200', 'Get 200 correctly first time';
+    my $body = $tx->res->body;
+    like $body, qr/\d+\.\d+/, 'Body has timestamp only';
 
-	# ...switch to serving 404
-	$controller = sub { shift->render(text => Time::HiRes::time(), status => 404); };
+    # ...switch to serving 404
+    $controller = sub { shift->render(text => Time::HiRes::time(), status => 404); };
 
-	# ...Second request now gets cached version
-	$tx = $ua->get("/maybe_not_found");
-	is $tx->res->code, '200', 'Get 200 correctly first cached version';
-	is $body, $tx->res->body, 'Result is cached';
+    # ...Second request now gets cached version
+    $tx = $ua->get("/maybe_not_found");
+    is $tx->res->code, '200', 'Get 200 correctly first cached version';
+    is $body, $tx->res->body, 'Result is cached';
 
-	# ...expire our cache (time has passed...)
-	$ua->expire($ua->generate_key('/maybe_not_found'));
+    # ...expire our cache (time has passed...)
+    $ua->expire($ua->generate_key('/maybe_not_found'));
 
-	# ...get a a expired+cached result now that it returns 404 and we expired the cache
-	$tx = $ua->get("/maybe_not_found");
-	is $tx->res->code, '200', 'Get 200 correctly cached and expired';
-	is $body, $tx->res->body, 'Result is cached';
+    # ...get a a expired+cached result now that it returns 404 and we expired the cache
+    $tx = $ua->get("/maybe_not_found");
+    is $tx->res->code, '200', 'Get 200 correctly cached and expired';
+    is $body, $tx->res->body, 'Result is cached';
 
-	# ...start accepting 404 as non-error content
-	$ua->accepted_error_codes(404);
+    # ...start accepting 404 as non-error content
+    $ua->accepted_error_codes(404);
 
-	# ...we now accept 404s so we should get a fresh 404 request
-	$tx = $ua->get("/maybe_not_found");
-	my $new_body = $tx->res->body;
-	is $tx->res->code, '404', 'Get 404 correctly - Not in cache anymore';
-	isnt $body, $new_body, 'Result is fresh';
+    # ...we now accept 404s so we should get a fresh 404 request
+    $tx = $ua->get("/maybe_not_found");
+    my $new_body = $tx->res->body;
+    is $tx->res->code, '404', 'Get 404 correctly - Not in cache anymore';
+    isnt $body, $new_body, 'Result is fresh';
 
-	# ...this result should now be cached
-	$tx = $ua->get("/maybe_not_found");
-	is $tx->res->code, '404', 'Get 404 correctly - cached again';
-	is $new_body, $tx->res->body, 'Result is the same as last one';
+    # ...this result should now be cached
+    $tx = $ua->get("/maybe_not_found");
+    is $tx->res->code, '404', 'Get 404 correctly - cached again';
+    is $new_body, $tx->res->body, 'Result is the same as last one';
 
-	# ...expire our cache (time has passed...)
-	$ua->expire($ua->generate_key('/maybe_not_found'));
+    # ...expire our cache (time has passed...)
+    $ua->expire($ua->generate_key('/maybe_not_found'));
 
-	# ...get fresh result as we expired the cache and 404 is still not considered an error
-	$tx = $ua->get("/maybe_not_found");
-	is $tx->res->code, '404', 'Get 404 correctly - fresh';
-	isnt $new_body, $tx->res->body, 'Result is fresh';
+    # ...get fresh result as we expired the cache and 404 is still not considered an error
+    $tx = $ua->get("/maybe_not_found");
+    is $tx->res->code, '404', 'Get 404 correctly - fresh';
+    isnt $new_body, $tx->res->body, 'Result is fresh';
 };
 
 # TODO: Replace google.com tests with local server
@@ -253,6 +279,27 @@ subtest 'normalize URLs' => sub {
     while (my ($in, $exp) = each %{$urls}) {
         is $ua->sort_query($in), $exp, "$in => $exp";
     }
+};
+
+subtest 'url by url caching' => sub {
+   local $ENV{SUA_CACHE_EXPIRES_IN} = '1 seconds';
+   my $ua = Mojo::UserAgent::Cached->new( cache_url_opts => { 'http://.*?/content' => { expires_in => '5 seconds' } } );
+   $ua->server->app($app);
+
+   # Allow caching /foo requests too
+   no warnings 'redefine';
+   local *Mojo::UserAgent::Cached::is_cacheable = sub { return 1; };
+
+   $ua->invalidate($ua->generate_key('/content'));
+   my $tx = $ua->get('/content');
+   my $first_cached_at = $tx->res->headers->header('X-Mojo-UserAgent-Cached-Cached');
+
+   sleep 1;
+
+   my $tx2 = $ua->get('/content');
+
+   is $tx2->res->headers->header('X-Mojo-UserAgent-Cached-Cached'), $first_cached_at, 'Same cached at time';
+   ok $tx2->res->headers->header('X-Mojo-UserAgent-Cached-Age') > 0, 'Has been in cached more than the default 1 seconds';
 };
 
 done_testing();
