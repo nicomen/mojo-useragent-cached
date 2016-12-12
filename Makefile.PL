@@ -11,6 +11,7 @@ all_from 'lib/Mojo/UserAgent/Cached.pm';
 
 configure_requires 'Module::Install' => 0;
 
+requires 'Algorithm::LCSS';
 requires 'CHI';
 requires 'Data::Serializer';
 requires 'Devel::StackTrace';
