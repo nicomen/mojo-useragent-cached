@@ -50,12 +50,12 @@ has 'cache_agent'        => sub { $ENV{MUAC_NOCACHE} ? () : CHI->new(
         expires_on_backend => $ENV{MUAC_CACHE_EXPIRES_ON_BACKEND} // 1,
 )};
 
-has 'cache_url_opts' => sub { {} };
-has 'logger' => sub { Mojo::Log->new() };
-has 'access_log' => sub { $ENV{MUAC_ACCESS_LOG} || '' };
+has 'cache_url_opts'             => sub { {} };
+has 'logger'                     => sub { Mojo::Log->new() };
+has 'access_log'                 => sub { $ENV{MUAC_ACCESS_LOG} || '' };
 has 'use_expired_cached_content' => sub { $ENV{MUAC_USE_EXPIRED_CACHED_CONTENT} // 1 };
-has 'accepted_error_codes' => sub { $ENV{MUAC_ACCEPTED_ERROR_CODES} || '' };
-has 'sorted_queries' => sub { };
+has 'accepted_error_codes'       => sub { $ENV{MUAC_ACCEPTED_ERROR_CODES} || '' };
+has 'sorted_queries'             => sub { };
 
 has 'created_stacktrace' => '';
 
@@ -139,7 +139,7 @@ sub get {
         $cb->($ua, $ua->_post_process_get($tx, $start_time, $key, @opts));
     } : ();
     # Is an absolute URL or an URL relative to the app eg. http://foo.com/ or /foo.txt
-    if (Mojo::URL->new($url)->is_abs || $url =~ m{ \A / }gmx) {
+    if ($url !~ m{ \A file:// }gmx && (Mojo::URL->new($url)->is_abs || $url =~ m{ \A / }gmx)) {
         if ($self->is_cacheable($key)) {
             my $serialized = $self->cache_agent->get($key);
             if ($serialized) {
@@ -160,7 +160,8 @@ sub get {
         return $self->SUPER::get($url,$wrapper_cb) if $wrapper_cb;
         return $self->_post_process_get( $self->SUPER::get($url, @opts), $start_time, $key, @opts );
 
-    } else { # Local file eg. t/data/foo.txt
+    } else { # Local file eg. t/data/foo.txt or file://.*/
+        $url =~ s{ \A file://[^/]* }{}gmx;
         $url = $self->local_dir ? File::Spec->catfile($self->local_dir, "$url") : "$url";
 
         my $code = $HTTP_FILE_NOT_FOUND;

@@ -302,4 +302,9 @@ subtest 'url by url caching' => sub {
    ok $tx2->res->headers->header('X-Mojo-UserAgent-Cached-Age') > 0, 'Has been in cached more than the default 1 seconds';
 };
 
+subtest 'Support file:// URLs' => sub {
+   my $tx = Mojo::UserAgent::Cached->new->get("file://$Bin/data/newsfeed.xml");
+   is $tx->res->dom->at('channel title')->text, 'TITLE', 'Found content in local file';
+};
+
 done_testing();
