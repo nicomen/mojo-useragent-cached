@@ -15,7 +15,7 @@ use Mojo::Transaction::HTTP;
 use Mojo::URL;
 use Mojo::Log;
 use Mojo::Base 'Mojo::UserAgent';
-use Mojo::Util;
+use Mojo::File;
 use POSIX;
 use Readonly;
 use String::Truncate;
@@ -347,7 +347,7 @@ sub _parse_local_file_res {
     my ($self, $url) = @_;
 
     my $headers;
-    my $body = Mojo::Util::slurp($url, 'binmode' => ':raw' );
+    my $body = Mojo::File->new($url)->slurp;
     my $code = $HTTP_OK;
     my $msg  = 'OK';
 
@@ -379,13 +379,13 @@ sub _write_local_file_res {
 
     my $target_file = File::Spec->catfile($dir, split '/', $url->path_query);
     File::Path::make_path(File::Basename::dirname($target_file));
-    Mojo::Util::spurt((
+    Mojo::File->new($target_file)->spurt((
         join "\n\n",
            (join " ", $method, "$url\n"  ) . $tx->req->headers->to_string,
            (join " ", $code, "$message\n") . $tx->res->headers->to_string,
-           $body),
-    $target_file)
-        and $self->logger->debug("Wrote request+response to: '$target_file'");
+           $body
+        )
+    ) and $self->logger->debug("Wrote request+response to: '$target_file'");
 }
 
 sub _log_line {
