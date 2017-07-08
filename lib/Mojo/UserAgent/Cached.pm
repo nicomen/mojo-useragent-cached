@@ -680,6 +680,6 @@ Nicolas Mendoza (2015-), ABC Startsiden (2015)
 
 =head1 LICENSE
 
-Artistic licence as per agreement with ABC Startsiden on 2015-06-02
+Same as Perl licence as per agreement with ABC Startsiden on 2015-06-02
 
 =cut
