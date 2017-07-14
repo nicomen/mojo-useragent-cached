@@ -196,13 +196,10 @@ sub _post_process_get {
     if ( $self->is_cacheable($key) ) {
         if ( $self->is_considered_error($tx) ) {
             # Return an expired+cached version of the page for other errors
-            # for all services, e.g. Chartbeat (also including DrPublish).
             if ( $self->use_expired_cached_content ) { # TODO: URL by URL, and case-by-case expiration
-                my $cache_obj = $self->cache_agent->get_object($key);
-                if ($cache_obj) {
+                if (my $cache_obj = $self->cache_agent->get_object($key)) {
                     my $serialized = $cache_obj->value;
-                    $serialized->{headers}->{'X-Mojo-UserAgent-Cached-ExpiresAt'}
-                        = $cache_obj->expires_at($key);
+                    $serialized->{headers}->{'X-Mojo-UserAgent-Cached-ExpiresAt'} = $cache_obj->expires_at($key);
 
                     my $expired_tx = _build_fake_tx($serialized);
                     $self->_log_line( $expired_tx, {
@@ -519,17 +516,17 @@ to the value of the C<MUAC_ALWAYS_RETURN_FILE> environment value and if not, it 
 
   my $cache_agent = $ua->cache_agent;
   $ua->cache_agent(CHI->new(
-        driver             => $ENV{MUAC_CACHE_DRIVER}             || 'File',
-        root_dir           => $ENV{MUAC_CACHE_ROOT_DIR}           || '/tmp/mojo-useragent-cached',
-        serializer         => $ENV{MUAC_CACHE_SERIALIZER}         || 'Storable',
-        namespace          => $ENV{MUAC_CACHE_NAMESPACE}          || 'MUAC_Client',
-        expires_in         => $ENV{MUAC_CACHE_EXPIRES_IN}         // '1 minute',
-        expires_on_backend => $ENV{MUAC_CACHE_EXPIRES_ON_BACKEND} // 1,
+    driver             => $ENV{MUAC_CACHE_DRIVER}             || 'File',
+    root_dir           => $ENV{MUAC_CACHE_ROOT_DIR}           || '/tmp/mojo-useragent-cached',
+    serializer         => $ENV{MUAC_CACHE_SERIALIZER}         || 'Storable',
+    namespace          => $ENV{MUAC_CACHE_NAMESPACE}          || 'MUAC_Client',
+    expires_in         => $ENV{MUAC_CACHE_EXPIRES_IN}         // '1 minute',
+    expires_on_backend => $ENV{MUAC_CACHE_EXPIRES_ON_BACKEND} // 1,
   ));
 
 Tells L<Mojo::UserAgent::Cached> which cache_agent to use. It needs to be CHI-compliant and defaults to the above settings.
 
-You may also set the C<MUAC_NOCACHE> environment variable to avoid caching at all.
+You may also set the C<$ENV{MUAC_NOCACHE}> environment variable to avoid caching at all.
 
 =head2 cache_opts
 
@@ -668,8 +665,6 @@ Accepts the same arguments and returns the same as L<Mojo::UserAgent>.
 
 It will try to return a cached version of the $url, adhering to the set or default attributes.
 
-If any of other arguments than the first one ($url) are given, caching is ignored.
-
 In addition if a relative file path is given, it tries to return the file appended to
 the attribute C<local_dir>. In this case a fake L<Mojo::Transaction::HTTP> object is returned,
 populated with a L<Mojo::Message::Request> with method and url, and a L<Mojo::Message::Response>
@@ -677,7 +672,7 @@ with headers, code and body set.
 
 =head1 ENVIRONMENT VARIABLES
 
-C<MUAC_CLIENT_WRITE_LOCAL_FILE_RES_DIR> can be set to a directory to store a request in:
+C<$ENV{MUAC_CLIENT_WRITE_LOCAL_FILE_RES_DIR}> can be set to a directory to store a request in:
 
   # Re-usable local file with headers and metadata ends up at 't/data/dir/lol/foo.html?bar=1'
   $ENV{MUAC_CLIENT_WRITE_LOCAL_FILE_RES_DIR}='t/data/dir';
