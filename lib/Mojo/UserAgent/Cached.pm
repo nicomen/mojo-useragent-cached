@@ -121,11 +121,12 @@ sub expire {
     return;
 }
 
-sub get {
-    my ($self, $url, @opts) = @_;
+sub start {
+    my ($self, $tx, @opts) = @_;
 
     my $cb = ref $opts[-1] eq 'CODE' ? pop @opts : undef;
 
+    my $url = $tx->req->url->to_abs;
     $url = $self->sort_query($url) if $self->sorted_queries;
     $url = ($self->always_return_file || $url);
 
@@ -139,7 +140,7 @@ sub get {
         $cb->($ua, $ua->_post_process_get($tx, $start_time, $key, @opts));
     } : ();
     # Is an absolute URL or an URL relative to the app eg. http://foo.com/ or /foo.txt
-    if ($url !~ m{ \A file:// }gmx && (Mojo::URL->new($url)->is_abs || $url =~ m{ \A / }gmx)) {
+    if (!$self->always_return_file && ($url !~ m{ \A file:// }gmx && (Mojo::URL->new($url)->is_abs || $url =~ m{ \A / }gmx))) {
         if ($self->is_cacheable($key)) {
             my $serialized = $self->cache_agent->get($key);
             if ($serialized) {
@@ -157,8 +158,8 @@ sub get {
         }
 
         # first non-blocking, if no callback regular post process
-        return $self->SUPER::get($url,$wrapper_cb) if $wrapper_cb;
-        return $self->_post_process_get( $self->SUPER::get($url, @opts), $start_time, $key, @opts );
+        return $self->SUPER::start($tx,$wrapper_cb) if $wrapper_cb;
+        return $self->_post_process_get( $self->SUPER::start($tx, @opts), $start_time, $key, @opts );
 
     } else { # Local file eg. t/data/foo.txt or file://.*/
         $url =~ s{ \A file://[^/]* }{}gmx;
@@ -169,6 +170,7 @@ sub get {
         eval {
             $res = $self->_parse_local_file_res($url);
             $code = $res->{code};
+            1;
         } or $self->logger->error($EVAL_ERROR);
 
         my $params = { url => $url, body => $res->{body}, code => $code, method => 'FILE', headers => $res->{headers} };
