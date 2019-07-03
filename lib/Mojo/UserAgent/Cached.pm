@@ -139,7 +139,7 @@ sub get {
         $cb->($ua, $ua->_post_process_get($tx, $start_time, $key, @opts));
     } : ();
     # Is an absolute URL or an URL relative to the app eg. http://foo.com/ or /foo.txt
-    if ($url !~ m{ \A file:// }gmx && (Mojo::URL->new($url)->is_abs || $url =~ m{ \A / }gmx)) {
+    if ($url !~ m{ \A file:// }gmx && (Mojo::URL->new($url)->is_abs || ($url =~ m{ \A / }gmx && !$self->always_return_file))) {
         if ($self->is_cacheable($key)) {
             my $serialized = $self->cache_agent->get($key);
             if ($serialized) {
