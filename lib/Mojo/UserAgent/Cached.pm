@@ -31,10 +31,10 @@ our $VERSION = '1.06';
 
 # MOJO_USERAGENT_CONFIG
 ## no critic (ProhibitMagicNumbers)
-has 'connect_timeout'    => sub { $ENV{MOJO_CONNECT_TIMEOUT}    // 2  };
-has 'inactivity_timeout' => sub { $ENV{MOJO_INACTIVITY_TIMEOUT} // 5  };
-has 'max_redirects'      => sub { $ENV{MOJO_MAX_REDIRECTS}      // 4  };
-has 'request_timeout'    => sub { $ENV{MOJO_REQUEST_TIMEOUT}    // 10 };
+has 'connect_timeout'    => sub { $ENV{MOJO_CONNECT_TIMEOUT}    // 10  };
+has 'inactivity_timeout' => sub { $ENV{MOJO_INACTIVITY_TIMEOUT} // 20  };
+has 'max_redirects'      => sub { $ENV{MOJO_MAX_REDIRECTS}      // 4   };
+has 'request_timeout'    => sub { $ENV{MOJO_REQUEST_TIMEOUT}    // 0   };
 ## use critic
 
 # MUAC_CLIENT_CONFIG
