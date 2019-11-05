@@ -41,15 +41,18 @@ has 'request_timeout'    => sub { $ENV{MOJO_REQUEST_TIMEOUT}    // 0   };
 has 'local_dir'          => sub { $ENV{MUAC_LOCAL_DIR}          // q{}   };
 has 'always_return_file' => sub { $ENV{MUAC_ALWAYS_RETURN_FILE} // undef };
 
-has 'cache_agent'        => sub { $ENV{MUAC_NOCACHE} ? () : CHI->new(
-        driver             => $ENV{MUAC_CACHE_DRIVER}             || 'File',
-        root_dir           => $ENV{MUAC_CACHE_ROOT_DIR}           || '/tmp/mojo-useragent-cached',
-        serializer         => $ENV{MUAC_CACHE_SERIALIZER}         || 'Storable',
-        namespace          => $ENV{MUAC_CACHE_NAMESPACE}          || 'MUAC_Client',
-        expires_in         => $ENV{MUAC_CACHE_EXPIRES_IN}         // '1 minute',
-        expires_on_backend => $ENV{MUAC_CACHE_EXPIRES_ON_BACKEND} // 1,
-)};
-
+has 'cache_agent'        => sub {
+  $ENV{MUAC_NOCACHE} ? () : CHI->new(
+    driver             => $ENV{MUAC_CACHE_DRIVER}             || 'File',
+    root_dir           => $ENV{MUAC_CACHE_ROOT_DIR}           || '/tmp/mojo-useragent-cached',
+    serializer         => $ENV{MUAC_CACHE_SERIALIZER}         || 'Storable',
+    namespace          => $ENV{MUAC_CACHE_NAMESPACE}          || 'MUAC_Client',
+    expires_in         => $ENV{MUAC_CACHE_EXPIRES_IN}         // '1 minute',
+    expires_on_backend => $ENV{MUAC_CACHE_EXPIRES_ON_BACKEND} // 1,
+    %{ shift->cache_opts || {} },
+  )
+};
+has 'cache_opts'                 => sub { {} };
 has 'cache_url_opts'             => sub { {} };
 has 'logger'                     => sub { Mojo::Log->new() };
 has 'access_log'                 => sub { $ENV{MUAC_ACCESS_LOG} || '' };
@@ -526,6 +529,13 @@ to the value of the C<MUAC_ALWAYS_RETURN_FILE> environment value and if not, it 
 Tells L<Mojo::UserAgent::Cached> which cache_agent to use. It needs to be CHI-compliant and defaults to the above settings.
 
 You may also set the C<MUAC_NOCACHE> environment variable to avoid caching at all.
+
+=head2 cache_opts
+
+  my $cache_opts = $ua->cache_opts;
+  $ua->cache_opts({ expires_in => '5 minutes' });
+
+Allows passing in cache options that will be appended to existing options in default cache agent creation.
 
 =head2 cache_url_opts
 
