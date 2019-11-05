@@ -88,6 +88,7 @@ sub new {
     map { $ua->$_( $opts{$_} ) } grep { exists $opts{$_} } qw/
         local_dir
         always_return_file
+        cache_opts
         cache_agent
         cache_url_opts
         logger
