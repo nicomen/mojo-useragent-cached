@@ -5,12 +5,14 @@ use strict;
 use v5.10;
 use Algorithm::LCSS;
 use CHI;
+use Cwd;
 use Devel::StackTrace;
 use English qw(-no_match_vars);
 use File::Basename;
 use File::Path;
 use File::Spec;
 use List::Util;
+use Mojo::JSON qw/to_json/;
 use Mojo::Transaction::HTTP;
 use Mojo::URL;
 use Mojo::Log;
@@ -58,7 +60,7 @@ has 'logger'                     => sub { Mojo::Log->new() };
 has 'access_log'                 => sub { $ENV{MUAC_ACCESS_LOG} || '' };
 has 'use_expired_cached_content' => sub { $ENV{MUAC_USE_EXPIRED_CACHED_CONTENT} // 1 };
 has 'accepted_error_codes'       => sub { $ENV{MUAC_ACCEPTED_ERROR_CODES} || '' };
-has 'sorted_queries'             => sub { };
+has 'sorted_queries'             => 1;
 
 has 'created_stacktrace' => '';
 
@@ -103,6 +105,7 @@ sub new {
     return bless($ua, $class);
 }
 
+
 sub invalidate {
     my ($self, $key) = @_;
 
@@ -125,75 +128,100 @@ sub expire {
     return;
 }
 
-sub get {
-    my ($self, $url, @opts) = @_;
+sub build_tx {
+  my ($self, $method, $url, @more) = @_;
 
-    my $cb = ref $opts[-1] eq 'CODE' ? pop @opts : undef;
+  $url = ($self->always_return_file || $url);
 
-    $url = $self->sort_query($url) if $self->sorted_queries;
-    $url = ($self->always_return_file || $url);
+  if ($self->local_dir) {
+    $url = 'file://' . File::Spec->catfile($self->local_dir, "$url");
+  } elsif ($self->always_return_file) {
+    $url = 'file://' . "$url";
+  } elsif ($url !~ m{^(/|[^/]+:)}) {
+    $url = 'file://' . Cwd::realpath("$url");
+  }
+  $self->transactor->tx($method, $url, @more);
+}
 
-    my $key = $self->generate_key($url, @opts);
+sub start {
+  my ($self, $tx, $cb) = @_;
 
-    my $start_time = time;
+  my $url     = $tx->req->url;
+  my $method  = $tx->req->method;
+  my $headers = $tx->req->headers->to_hash(1);
+  my $content = $tx->req->content->asset->slurp;
+  $url = $self->sort_query($url) if $self->sorted_queries;
 
-    # We wrap the incoming callback in our own callback to be able to cache the response
-    my $wrapper_cb = $cb ? sub {
-        my ($ua, $tx) = @_;
-        $cb->($ua, $ua->_post_process_get($tx, $start_time, $key, @opts));
-    } : ();
-    # Is an absolute URL or an URL relative to the app eg. http://foo.com/ or /foo.txt
-    if ($url !~ m{ \A file:// }gmx && (Mojo::URL->new($url)->is_abs || ($url =~ m{ \A / }gmx && !$self->always_return_file))) {
-        if ($self->is_cacheable($key)) {
-            my $serialized = $self->cache_agent->get($key);
-            if ($serialized) {
-                my $cached_tx = _build_fake_tx($serialized);
+  delete $headers->{'User-Agent'};
+  delete $headers->{'Accept-Encoding'};
+  my @opts = (($method eq 'GET' ? () : $method), (keys %{ $headers || {} } ? $headers : ()), $content || ());
+  my $key = $self->generate_key($url, @opts);
+  my $start_time = time;
 
-                $self->_log_line($cached_tx, {
-                    start_time => $start_time,
-                    key => $key,
-                    type => 'cached result',
-                });
-
-                return $cb->($self, $cached_tx) if $cb;
-                return $cached_tx;
-            }
-        }
-
-        # first non-blocking, if no callback regular post process
-        return $self->SUPER::get($url,$wrapper_cb) if $wrapper_cb;
-        return $self->_post_process_get( $self->SUPER::get($url, @opts), $start_time, $key, @opts );
-
-    } else { # Local file eg. t/data/foo.txt or file://.*/
-        $url =~ s{ \A file://[^/]* }{}gmx;
-        $url = $self->local_dir ? File::Spec->catfile($self->local_dir, "$url") : "$url";
-
-        my $code = $HTTP_FILE_NOT_FOUND;
-        my $res;
-        eval {
-            $res = $self->_parse_local_file_res($url);
-            $code = $res->{code};
-        } or $self->logger->error($EVAL_ERROR);
-
-        my $params = { url => $url, body => $res->{body}, code => $code, method => 'FILE', headers => $res->{headers} };
-
-        # first non-blocking, if no callback, regular post process
-        my $tx = _build_fake_tx($params);
-        $self->_log_line($tx, {
-            start_time => $start_time,
-            key => $key,
-            type => 'local file',
+  # We wrap the incoming callback in our own callback to be able to cache the response
+  my $wrapper_cb = $cb ? sub {
+    my ($ua, $tx) = @_;
+    $cb->($ua, $ua->_post_process_get($tx, $start_time, $key, @opts));
+  } : ();
+  # Is an absolute URL or an URL relative to the app eg. http://foo.com/ or /foo.txt
+  if ($url !~ m{ \A file:// }gmx && (Mojo::URL->new($url)->is_abs || ($url =~ m{ \A / }gmx && !$self->always_return_file))) {
+    if ($self->is_cacheable($key)) {
+      my $serialized = $self->cache_agent->get($key);
+      if ($serialized) {
+        my $cached_tx = _build_fake_tx($serialized);
+        $self->_log_line($cached_tx, {
+          start_time => $start_time,
+          key => $key,
+          type => 'cached result',
         });
-
-        return $cb->($self, $tx) if $cb;
-        return $tx;
+        return $cb->($self, $cached_tx) if $cb;
+        return $cached_tx;
+      }
     }
+    # Fork-safety
+    $self->_cleanup->server->restart unless ($self->{pid} //= $$) eq $$;
+    # Non-blocking
+    if ($wrapper_cb) {
+      warn "-- Non-blocking request (@{[_url($tx)]})\n" if Mojo::UserAgent::DEBUG;
+      return $self->_start(Mojo::IOLoop->singleton, $tx, $wrapper_cb);
+    }
+
+    # Blocking
+    warn "-- Blocking request (@{[_url($tx)]})\n" if Mojo::UserAgent::DEBUG;
+    $self->_start($self->ioloop, $tx => sub { shift->ioloop->stop; $tx = shift });
+    $self->ioloop->start;
+
+    return $self->_post_process_get( $tx, $start_time, $key, @opts );
+  } else { # Local file eg. t/data/foo.txt or file://.*/
+    $url =~ s{file://}{};
+    my $code = $HTTP_FILE_NOT_FOUND;
+    my $res;
+    eval {
+      $res = $self->_parse_local_file_res($url);
+      $code = $res->{code};
+    } or $self->logger->error($EVAL_ERROR);
+
+    my $params = { url => $url, body => $res->{body}, code => $code, method => 'FILE', headers => $res->{headers} };
+
+    # first non-blocking, if no callback, regular post process
+    my $tx = _build_fake_tx($params);
+    $self->_log_line($tx, {
+      start_time => $start_time,
+      key => $key,
+      type => 'local file',
+    });
+
+    return $cb->($self, $tx) if $cb;
+    return $tx;
+  }
+
+  return $tx;
 }
 
 sub _post_process_get {
-    my ($self, $tx, $start_time, $key, @opts) = @_;
+    my ($self, $tx, $start_time, $key) = @_;
 
-    if ( $self->is_cacheable($key) ) {
+    if ( $tx->req->url->scheme ne 'file' && $self->is_cacheable($key) ) {
         if ( $self->is_considered_error($tx) ) {
             # Return an expired+cached version of the page for other errors
             if ( $self->use_expired_cached_content ) { # TODO: URL by URL, and case-by-case expiration
@@ -236,7 +264,6 @@ sub _cache_url_opts {
 sub set {
     my ($self, $url, $value) = @_;
 
-    # key is Mojo::URL
     my $key = $self->generate_key($url);
     $self->logger->debug("Illegal cache key: $key") && return if ref $key;
 
@@ -272,12 +299,7 @@ sub generate_key {
 
     my $cb = ref $opts[-1] eq 'CODE' ? pop @opts : undef;
 
-    my $key = join q{,}, $self->sort_query($url), map {
-        my $opt = $_;
-        ref $opt eq 'ARRAY' ? "[" . (join q{,}, @{$opt}) . "]" :
-        ref $opt eq 'HASH'  ? "{" . (join q{,}, map { ($_, $opt->{$_}) } sort keys %{$opt}) . "}" :
-        "$_"
-    } @opts;
+    my $key = join q{,}, $self->sort_query($url), (@opts ? to_json(@opts > 1 ? \@opts : $opts[0]) : ());
 
     return $key;
 }
