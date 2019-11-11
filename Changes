@@ -1,3 +1,6 @@
+1.10 (2019-11-11)
+    (nicomen) Hook into start and build_tx method rather than just get, to allow caching otther methods, and _p variants
+
 1.09 (2019-11-05)
     (nicomen) Typo fix, to actually respect cache options
 
