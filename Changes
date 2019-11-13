@@ -1,3 +1,6 @@
+1.11 (2019-11-13
+    (nicomen) Fix regression when local_dir was set but asking for a real URL
+
 1.10 (2019-11-11)
     (nicomen) Hook into start and build_tx method rather than just get, to allow caching otther methods, and _p variants
 
