@@ -73,15 +73,18 @@ sub new {
         connect_timeout
         cookie_jar
         inactivity_timeout
+        insecure
         ioloop
         key
         local_address
         max_connections
         max_redirects
+        max_response_size
         proxy
         request_timeout
         server
         transactor
+
     /;
 
     my $ua = $class->SUPER::new(%mojo_agent_config);
