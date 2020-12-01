@@ -208,6 +208,34 @@ subtest 'Should run callbacks even if content is cached' => sub {
 
 };
 
+subtest 'Should emit events even if content is cached' => sub {
+    my $ua = Mojo::UserAgent::Cached->new();
+    $ua->server->app($app);
+
+    # Allow caching /foo requests too
+    local *Mojo::UserAgent::Cached::is_cacheable = sub { return 1; };
+
+    my $url = '/content';
+    my $tx = $ua->get($url);
+
+    my ($finished_req, $finished_tx, $finished_res);
+    $tx = $ua->build_tx('GET' => $url);
+    ok !$tx->is_finished, 'transaction is not finished';
+    $tx->req->on(finish => sub { $finished_req++ });
+    $tx->on(finish => sub { $finished_tx++ });
+    $tx->res->on(finish => sub { $finished_res++ });
+    $ua->start($tx);
+    is $finished_tx,  1, 'finish event has been emitted once';
+    TODO: {
+      local $TODO = 'Events partially implemented';
+      is $finished_req, 1, 'finish event has been emitted once';
+      is $finished_res, 1, 'finish event has been emitted once';
+      ok $tx->req->is_finished, 'request is finished';
+      ok $tx->is_finished, 'transaction is finished';
+      ok $tx->res->is_finished, 'response is finished';
+    }
+};
+
 subtest 'expired+cached functionality' => sub {
     my $ua = Mojo::UserAgent::Cached->new();
     $ua->server->app($app);

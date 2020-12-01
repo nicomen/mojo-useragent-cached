@@ -171,12 +171,14 @@ sub start {
     if ($self->is_cacheable($key)) {
       my $serialized = $self->cache_agent->get($key);
       if ($serialized) {
+        $serialized->{events} = $tx->{events};
         my $cached_tx = _build_fake_tx($serialized);
         $self->_log_line($cached_tx, {
           start_time => $start_time,
           key => $key,
           type => 'cached result',
         });
+        $cached_tx->closed->res->finish;
         return $cb->($self, $cached_tx) if $cb;
         return $cached_tx;
       }
@@ -204,7 +206,7 @@ sub start {
       $code = $res->{code};
     } or $self->logger->error($EVAL_ERROR);
 
-    my $params = { url => $url, body => $res->{body}, code => $code, method => 'FILE', headers => $res->{headers} };
+    my $params = { url => $url, body => $res->{body}, code => $code, method => 'FILE', headers => $res->{headers}, events => $tx->{events} };
 
     # first non-blocking, if no callback, regular post process
     my $tx = _build_fake_tx($params);
@@ -231,6 +233,7 @@ sub _post_process_get {
                 if (my $cache_obj = $self->cache_agent->get_object($key)) {
                     my $serialized = $cache_obj->value;
                     $serialized->{headers}->{'X-Mojo-UserAgent-Cached-ExpiresAt'} = $cache_obj->expires_at($key);
+                    $serialized->{events} = $tx->{events};
 
                     my $expired_tx = _build_fake_tx($serialized);
                     $self->_log_line( $expired_tx, {
@@ -239,6 +242,7 @@ sub _post_process_get {
                         type       => 'expired and cached',
                         orig_tx    => $tx,
                     });
+                    $expired_tx->closed->res->finish;
 
                     return $expired_tx;
                 }
@@ -366,6 +370,8 @@ sub _build_fake_tx {
     $tx->res->code($opts->{code});
     $tx->res->{json} = $opts->{json};
     $tx->res->body($opts->{body});
+
+    $tx->{events} = $opts->{events};
 
     return $tx;
 }
