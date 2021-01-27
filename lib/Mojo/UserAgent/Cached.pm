@@ -493,6 +493,8 @@ sub _get_stacktrace {
     } grep { $_ } @frames;
 }
 
+sub _url { shift->req->url->to_abs }
+
 1;
 
 =encoding utf8
