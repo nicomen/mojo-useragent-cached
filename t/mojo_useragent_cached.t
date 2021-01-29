@@ -224,16 +224,13 @@ subtest 'Should emit events even if content is cached' => sub {
     $tx->req->on(finish => sub { $finished_req++ });
     $tx->on(finish => sub { $finished_tx++ });
     $tx->res->on(finish => sub { $finished_res++ });
-    $ua->start($tx);
-    is $finished_tx,  1, 'finish event has been emitted once';
-    TODO: {
-      local $TODO = 'Events partially implemented';
-      is $finished_req, 1, 'finish event has been emitted once';
-      is $finished_res, 1, 'finish event has been emitted once';
-      ok $tx->req->is_finished, 'request is finished';
-      ok $tx->is_finished, 'transaction is finished';
-      ok $tx->res->is_finished, 'response is finished';
-    }
+    my $cached_tx = $ua->start($tx);
+    is $finished_tx,  1, 'finish event on transaction has been emitted once';
+    is $finished_req, 1, 'finish event on request has been emitted once';
+    is $finished_res, 1, 'finish event on response has been emitted once';
+    ok $cached_tx->is_finished, 'transaction is finished';
+    ok $cached_tx->req->is_finished, 'request is finished';
+    ok $cached_tx->res->is_finished, 'response is finished';
 };
 
 subtest 'expired+cached functionality' => sub {
