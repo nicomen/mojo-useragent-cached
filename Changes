@@ -1,3 +1,7 @@
+1.13 (2020-02-18)
+    (Peter Oliver) Handle finish events on req and res https://github.com/nicomen/mojo-useragent-cached/pull/1
+    (Peter Oliver) Provide a definition for _url() https://github.com/nicomen/mojo-useragent-cached/pull/2
+
 1.12 (2020-11-19)
     (nicomen) Add insecure and max_response_size attributes
 
