@@ -1,0 +1,54 @@
+!Build/
+.last_cover_stats
+/META.yml
+/META.json
+/MYMETA.*
+*.o
+*.pm.tdy
+*.bs
+
+MANIFEST
+*.tar
+*.gz
+pm_to_blib
+Build.bat
+blib/
+.build/
+_build/
+
+# Devel::Cover
+cover_db/
+
+# Devel::NYTProf
+nytprof.out
+
+# Dizt::Zilla
+/.build/
+
+# Module::Build
+_build/
+Build
+Build.bat
+
+# Module::Install
+inc/
+
+# ExtUitls::MakeMaker
+/blib/
+/_eumm/
+/*.gz
+/Makefile
+/Makefile.old
+/MANIFEST.bak
+/pm_to_blib
+/*.zip
+
+# MacOS files
+.DS_Store
+
+# Carton files
+local/
+
+# Sublime Text files
+*.sublime-project
+*.sublime-workspace
