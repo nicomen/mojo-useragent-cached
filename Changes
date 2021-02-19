@@ -1,3 +1,6 @@
+1.14 (2020-02-18)
+    (nicomen) Depend on newer Mojolicious that provides gzip method in Mojo::Util which is needed by test
+
 1.13 (2020-02-18)
     (Peter Oliver) Handle finish events on req and res https://github.com/nicomen/mojo-useragent-cached/pull/1
     (Peter Oliver) Provide a definition for _url() https://github.com/nicomen/mojo-useragent-cached/pull/2
