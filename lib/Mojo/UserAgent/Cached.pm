@@ -84,7 +84,6 @@ sub new {
         request_timeout
         server
         transactor
-
     /;
 
     my $ua = $class->SUPER::new(%mojo_agent_config);
@@ -164,11 +163,16 @@ sub start {
   my $key = $self->generate_key($url, @opts);
   my $start_time = time;
 
+  # Fork-safety
+  $self->_cleanup->server->restart if $self->{pid} && $self->{pid} ne $$;
+  $self->{pid} //= $$;
+
   # We wrap the incoming callback in our own callback to be able to cache the response
   my $wrapper_cb = $cb ? sub {
     my ($ua, $tx) = @_;
     $cb->($ua, $ua->_post_process_get($tx, $start_time, $key, @opts));
   } : ();
+
   # Is an absolute URL or an URL relative to the app eg. http://foo.com/ or /foo.txt
   if ($url !~ m{ \A file:// }gmx && (Mojo::URL->new($url)->is_abs || ($url =~ m{ \A / }gmx && !$self->always_return_file))) {
     if ($self->is_cacheable($key)) {
@@ -190,8 +194,7 @@ sub start {
         return $cached_tx;
       }
     }
-    # Fork-safety
-    $self->_cleanup->server->restart unless ($self->{pid} //= $$) eq $$;
+
     # Non-blocking
     if ($wrapper_cb) {
       warn "-- Non-blocking request (@{[_url($tx)]})\n" if Mojo::UserAgent::DEBUG;
