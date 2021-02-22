@@ -28,7 +28,7 @@ $app->routes->get('/content' => { text => 'content' });
 use FindBin qw($Bin);
 
 my $ua1 = Mojo::UserAgent::Cached->new( local_dir => "$Bin/../t/data" );
-ok $ua1->get('newsfeed.xml')->success, 'Can fetch local file and success is set';
+ok $ua1->get('newsfeed.xml')->res->is_success, 'Can fetch local file and success is set';
 is $ua1->get('newsfeed.xml')->res->code, 200, 'Can fetch local file and get correct status';
 like $ua1->get('newsfeed.xml')->res->body, qr/^<\?xml/, 'Can fetch local file and get its body';
 
@@ -129,7 +129,7 @@ subtest 'ABCN-3572' => sub {
         $url => sub {
             my ($ua, $tx) = @_;
             $headers = $tx->res->headers;
-            $success = $tx->success;
+            $success = $tx->res->is_success;
             $code    = $tx->res->code;
             $body    = $tx->res->body;
             Mojo::IOLoop->stop;

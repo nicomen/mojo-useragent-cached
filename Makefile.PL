@@ -26,7 +26,7 @@ requires 'File::Basename';
 requires 'File::Path';
 requires 'File::Spec';
 requires 'List::Util' => '1.29';
-requires 'Mojolicious' => '7.15';
+requires 'Mojolicious' => '8.72';
 requires 'POSIX';
 requires 'Readonly';
 requires 'String::Truncate';
