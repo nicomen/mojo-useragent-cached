@@ -157,7 +157,6 @@ sub start {
   my $headers = $tx->req->headers->to_hash(1);
   my $content = $tx->req->content->asset->slurp;
   $tx->req->url($self->sort_query($url));
-
   delete $headers->{'User-Agent'};
   delete $headers->{'Accept-Encoding'};
   my @opts = (($method eq 'GET' ? () : $method), (keys %{ $headers || {} } ? $headers : ()), $content || ());
@@ -351,6 +350,7 @@ sub sort_query {
 
     my $flattened_sorted_url = ($url->protocol ? ( $url->protocol . '://' ) : '' ) .
                                ($url->host     ? ( $url->host_port        ) : '' ) .
+                               ($url->userinfo ? ( $url->userinfo         ) : '' ) .
                                ($url->path     ? ( $url->path             ) : '' ) ;
 
     $flattened_sorted_url .= '?' . join '&', sort { $a cmp $b } List::Util::pairmap { (($b ne '') ? (join '=', $a, $b) : $a); } @{ $url->query }
