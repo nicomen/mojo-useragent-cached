@@ -156,7 +156,6 @@ sub start {
   my $method  = $tx->req->method;
   my $headers = $tx->req->headers->to_hash(1);
   my $content = $tx->req->content->asset->slurp;
-  $tx->req->url($self->sort_query($url));
   delete $headers->{'User-Agent'};
   delete $headers->{'Accept-Encoding'};
   my @opts = (($method eq 'GET' ? () : $method), (keys %{ $headers || {} } ? $headers : ()), $content || ());
@@ -346,17 +345,17 @@ sub sort_query {
     my ($self, $url) = @_;
     return $url unless $self->sorted_queries;
 
-    $url = Mojo::URL->new($url);
+    $url = Mojo::URL->new($url) unless ref $url eq 'Mojo::URL';
 
     my $flattened_sorted_url = ($url->protocol ? ( $url->protocol . '://' ) : '' ) .
+                               ($url->userinfo ? ( $url->userinfo . '@'   ) : '' ) .
                                ($url->host     ? ( $url->host_port        ) : '' ) .
-                               ($url->userinfo ? ( $url->userinfo         ) : '' ) .
                                ($url->path     ? ( $url->path             ) : '' ) ;
 
     $flattened_sorted_url .= '?' . join '&', sort { $a cmp $b } List::Util::pairmap { (($b ne '') ? (join '=', $a, $b) : $a); } @{ $url->query }
         if scalar @{ $url->query };
 
-    return Mojo::URL->new($flattened_sorted_url);
+    return $flattened_sorted_url;
 }
 
 sub _serialize_tx {
