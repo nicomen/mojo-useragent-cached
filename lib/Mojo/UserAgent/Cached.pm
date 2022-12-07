@@ -152,7 +152,7 @@ sub build_tx {
 sub start {
   my ($self, $tx, $cb) = @_;
 
-  my $url     = $tx->req->url;
+  my $url     = $tx->req->url->to_unsafe_string;
   my $method  = $tx->req->method;
   my $headers = $tx->req->headers->to_hash(1);
   my $content = $tx->req->content->asset->slurp;
