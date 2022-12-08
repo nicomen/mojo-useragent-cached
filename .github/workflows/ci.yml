@@ -37,6 +37,7 @@ jobs:
     - name: Install Modules
       run: |
         cpanm -v
+        cpanm --notest Module::Install
         cpanm --installdeps --notest .
 
     - name: Show Errors on Windows
