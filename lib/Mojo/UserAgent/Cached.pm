@@ -696,9 +696,9 @@ Set allows setting data directly for a given URL
 Returns a key to be used for the cache agent. It accepts the same parameters
 that a normal ->get() request does.
 
-=head2 validate_key
+=head2 is_valid
 
-  my $status = $ua4->validate_key('http://example.com');
+  my $status = $ua->is_valid('http://example.com');
 
 Fast validates if key is valid in cache without doing fetch.
 Return 1 if true.
